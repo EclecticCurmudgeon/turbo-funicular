@@ -76,6 +76,7 @@ apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: linkerd-trust-anchor
+  namespace: linkerd
 spec:
   selfSigned: {}
 ---
