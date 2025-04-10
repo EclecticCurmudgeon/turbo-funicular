@@ -1,29 +1,27 @@
-🚀 Deploy Linkerd with Cert Manager via Argo CD (Inline Helm Parameters)
+
+# 🚀 Deploy Linkerd with Cert Manager via Argo CD (Inline Helm Parameters)
 
 This setup includes:
+- **Cert Manager** deployed to the `cert-manager` namespace
+- **Linkerd** control plane deployed to the `linkerd` namespace
+- **All TLS certificates managed by Cert Manager**
+- **Everything defined as Argo CD Applications**
+- **No external `values.yaml` — all values set inline**
 
-    Cert Manager deployed to the cert-manager namespace
+---
 
-    Linkerd control plane deployed to the linkerd namespace
+## ✅ Prerequisites
 
-    All TLS certificates managed by Cert Manager
+- Argo CD installed and running
+- Cert Manager Helm repo: `https://charts.jetstack.io`
+- Linkerd Helm repo: `https://helm.linkerd.io/stable`
+- GitOps repo with these manifests
 
-    Everything defined as Argo CD Applications
+---
 
-    No external values.yaml — all values set inline
+## 📁 GitOps Repository Layout
 
-✅ Prerequisites
-
-    Argo CD installed and running
-
-    Cert Manager Helm repo: https://charts.jetstack.io
-
-    Linkerd Helm repo: https://helm.linkerd.io/stable
-
-    GitOps repo with these manifests
-
-📁 GitOps Repository Layout
-
+```plaintext
 .
 ├── cert-manager
 │   └── app.yaml
@@ -34,10 +32,15 @@ This setup includes:
     ├── ca.yaml
     ├── issuer.yaml
     └── app.yaml
+```
 
-1. 🚀 Cert Manager (with CRDs)
-cert-manager/app.yaml
+---
 
+## 1. 🚀 Cert Manager (with CRDs)
+
+### cert-manager/app.yaml
+
+```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -60,10 +63,15 @@ spec:
     automated:
       selfHeal: true
       prune: true
+```
 
-2. 🛡️ Linkerd Trust Anchor and Issuer (Cert Manager Certificates)
-linkerd-certs/ca.yaml
+---
 
+## 2. 🛡️ Linkerd Trust Anchor and Issuer (Cert Manager Certificates)
+
+### linkerd-certs/ca.yaml
+
+```yaml
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -84,9 +92,11 @@ spec:
   issuerRef:
     name: linkerd-trust-anchor
     kind: ClusterIssuer
+```
 
-linkerd-certs/issuer.yaml
+### linkerd-certs/issuer.yaml
 
+```yaml
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
@@ -108,9 +118,11 @@ spec:
   issuerRef:
     name: linkerd-issuer
     kind: Issuer
+```
 
-linkerd-certs/app.yaml
+### linkerd-certs/app.yaml
 
+```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -129,10 +141,15 @@ spec:
     automated:
       selfHeal: true
       prune: true
+```
 
-3. ⚙️ Linkerd CRDs (must be deployed first)
-linkerd/app-crds.yaml
+---
 
+## 3. ⚙️ Linkerd CRDs (must be deployed first)
+
+### linkerd/app-crds.yaml
+
+```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -151,10 +168,15 @@ spec:
     automated:
       selfHeal: true
       prune: true
+```
 
-4. 🚀 Linkerd Control Plane with External CA (Cert Manager)
-linkerd/app-control-plane.yaml
+---
 
+## 4. 🚀 Linkerd Control Plane with External CA (Cert Manager)
+
+### linkerd/app-control-plane.yaml
+
+```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -177,20 +199,26 @@ spec:
     automated:
       selfHeal: true
       prune: true
+```
 
-    ✅ The secret linkerd-identity-issuer must be present in the linkerd namespace before this chart is synced.
+> ✅ The secret `linkerd-identity-issuer` must be present in the `linkerd` namespace before this chart is synced.
 
-🧠 Sync Order Notes
+---
+
+## 🧠 Sync Order Notes
 
 If using Argo CD v2.7+, you can use Application dependencies (preferred):
 
+```yaml
   dependencies:
     - cert-manager
     - linkerd-certs
     - linkerd-crds
+```
 
 Or define sync waves:
 
+```yaml
   syncPolicy:
     syncOptions:
       - CreateNamespace=true
@@ -198,11 +226,16 @@ Or define sync waves:
       prune: true
       selfHeal: true
     syncWave: "0" # for cert-manager
+```
 
 Then:
+- `linkerd-certs` → syncWave: `"1"`
+- `linkerd-crds` → syncWave: `"1"`
+- `linkerd` → syncWave: `"2"`
 
-    linkerd-certs → syncWave: "1"
+---
 
-    linkerd-crds → syncWave: "1"
-
-    linkerd → syncWave: "2"
+Let me know if you want to extend this to include:
+- Linkerd Viz
+- Automatic mesh injection
+- Dashboard/observability tooling
