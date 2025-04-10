@@ -1,22 +1,43 @@
-# Linkerd + cert-manager Deployment via Argo CD (GitOps Guide)
+🚀 Deploy Linkerd with Cert Manager via Argo CD (Inline Helm Parameters)
 
-This guide walks through deploying **Linkerd** service mesh and **cert-manager** using their **community Helm charts** via **Argo CD**, with all TLS certificates managed by cert-manager.
+This setup includes:
 
----
+    Cert Manager deployed to the cert-manager namespace
 
-## 🔧 Prerequisites
+    Linkerd control plane deployed to the linkerd namespace
 
-- Kubernetes cluster with Argo CD installed
-- `kubectl`, `helm`, and `argocd` CLIs configured
-- Argo CD connected to Git repo hosting the manifests below
+    All TLS certificates managed by Cert Manager
 
----
+    Everything defined as Argo CD Applications
 
-## 1. Install `cert-manager` using Argo CD
+    No external values.yaml — all values set inline
 
-**File**: `apps/cert-manager.yaml`
+✅ Prerequisites
 
-```yaml
+    Argo CD installed and running
+
+    Cert Manager Helm repo: https://charts.jetstack.io
+
+    Linkerd Helm repo: https://helm.linkerd.io/stable
+
+    GitOps repo with these manifests
+
+📁 GitOps Repository Layout
+
+.
+├── cert-manager
+│   └── app.yaml
+├── linkerd
+│   ├── app-crds.yaml
+│   └── app-control-plane.yaml
+└── linkerd-certs
+    ├── ca.yaml
+    ├── issuer.yaml
+    └── app.yaml
+
+1. 🚀 Cert Manager (with CRDs)
+cert-manager/app.yaml
+
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -37,27 +58,18 @@ spec:
     namespace: cert-manager
   syncPolicy:
     automated:
-      prune: true
       selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-```
+      prune: true
 
----
+2. 🛡️ Linkerd Trust Anchor and Issuer (Cert Manager Certificates)
+linkerd-certs/ca.yaml
 
-## 2. Create Cert-Issuer Resources for Linkerd
-
-**File**: `manifests/linkerd/issuer.yaml`
-
-```yaml
----
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: linkerd-selfsigned
+  name: linkerd-trust-anchor
 spec:
   selfSigned: {}
-
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -66,112 +78,131 @@ metadata:
   namespace: linkerd
 spec:
   isCA: true
-  commonName: "identity.linkerd.cluster.local"
+  commonName: identity.linkerd.cluster.local
   secretName: linkerd-trust-anchor
+  duration: 87600h
   issuerRef:
-    name: linkerd-selfsigned
+    name: linkerd-trust-anchor
     kind: ClusterIssuer
 
----
+linkerd-certs/issuer.yaml
+
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
-  name: linkerd-identity-issuer
+  name: linkerd-issuer
+  namespace: linkerd
 spec:
   ca:
     secretName: linkerd-trust-anchor
-```
-
 ---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: linkerd-identity-issuer
+  namespace: linkerd
+spec:
+  commonName: identity.linkerd.cluster.local
+  secretName: linkerd-identity-issuer
+  duration: 43800h
+  issuerRef:
+    name: linkerd-issuer
+    kind: Issuer
 
-## 3. Deploy Linkerd using Argo CD with cert-manager Integration
+linkerd-certs/app.yaml
 
-**File**: `apps/linkerd.yaml`
-
-```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: linkerd-control-plane
+  name: linkerd-certs
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://your-git-repo
+    path: linkerd-certs
+    targetRevision: HEAD
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: linkerd
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true
+
+3. ⚙️ Linkerd CRDs (must be deployed first)
+linkerd/app-crds.yaml
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: linkerd-crds
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://helm.linkerd.io/stable
+    chart: linkerd-crds
+    targetRevision: 1.15.2
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: linkerd
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true
+
+4. 🚀 Linkerd Control Plane with External CA (Cert Manager)
+linkerd/app-control-plane.yaml
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: linkerd
   namespace: argocd
 spec:
   project: default
   source:
     repoURL: https://helm.linkerd.io/stable
     chart: linkerd-control-plane
-    targetRevision: 1.8.0
+    targetRevision: 1.15.2
     helm:
-      valueFiles:
-        - values/linkerd-values.yaml
+      parameters:
+        - name: identity.externalCA
+          value: "true"
   destination:
     server: https://kubernetes.default.svc
     namespace: linkerd
   syncPolicy:
     automated:
-      prune: true
       selfHeal: true
+      prune: true
+
+    ✅ The secret linkerd-identity-issuer must be present in the linkerd namespace before this chart is synced.
+
+🧠 Sync Order Notes
+
+If using Argo CD v2.7+, you can use Application dependencies (preferred):
+
+  dependencies:
+    - cert-manager
+    - linkerd-certs
+    - linkerd-crds
+
+Or define sync waves:
+
+  syncPolicy:
     syncOptions:
       - CreateNamespace=true
-```
-
-**File**: `values/linkerd-values.yaml`
-
-```yaml
-identity:
-  externalCA: true
-  issuer:
-    tls:
-      crtPEM:
-        secretName: linkerd-identity-issuer
-
-installNamespace: true
-```
-
----
-
-## 4. Optional: Linkerd Viz Component
-
-**File**: `apps/linkerd-viz.yaml`
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: linkerd-viz
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: https://helm.linkerd.io/stable
-    chart: linkerd-viz
-    targetRevision: 30.8.0
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: linkerd-viz
-  syncPolicy:
     automated:
       prune: true
       selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-```
+    syncWave: "0" # for cert-manager
 
----
+Then:
 
-## 5. GitOps Folder Structure
+    linkerd-certs → syncWave: "1"
 
-```bash
-repo-root/
-├── apps/
-│   ├── cert-manager.yaml
-│   ├── linkerd.yaml
-│   └── linkerd-viz.yaml
-├── manifests/
-│   └── linkerd/
-│       └── issuer.yaml
-└── values/
-    └── linkerd-values.yaml
-```
+    linkerd-crds → syncWave: "1"
 
-This structure supports GitOps using Argo CD, allowing declarative infrastructure provisioning and automated syncing.
-
+    linkerd → syncWave: "2"
