@@ -1,0 +1,67 @@
+
+# ------------------------
+# 1. ClusterIssuer: Self-signed Root CA
+# ------------------------
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: linkerd-trust-anchor
+spec:
+  selfSigned: {}
+---
+# ------------------------
+# 2. Certificate: Root CA (Trust Anchor)
+# ------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: linkerd-trust-anchor
+  namespace: linkerd
+spec:
+  isCA: true
+  commonName: identity.linkerd.cluster.local
+  secretName: linkerd-trust-anchor
+  duration: 87600h # 10 years
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: linkerd-trust-anchor
+    kind: ClusterIssuer
+---
+# ------------------------
+# 3. Issuer: Intermediate CA Issuer using Root CA
+# ------------------------
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: linkerd-issuer
+  namespace: linkerd
+spec:
+  ca:
+    secretName: linkerd-trust-anchor
+---
+# ------------------------
+# 4. Certificate: Intermediate Issuer (Linkerd Identity)
+# ------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: linkerd-identity-issuer
+  namespace: linkerd
+spec:
+  isCA: true
+  commonName: identity.linkerd.cluster.local
+  secretName: linkerd-identity-issuer
+  duration: 43800h # 5 years
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: linkerd-issuer
+    kind: Issuer
+
+## Verify cert chain kubectl get secret linkerd-identity-issuer -n linkerd -o jsonpath="{.data['tls\.crt']}" | base64 -d | openssl x509 -text -noout
+# Look for:
+#     Issuer: matches linkerd-trust-anchor
+#     CA:TRUE under X509v3 Basic Constraints
