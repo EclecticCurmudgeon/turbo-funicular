@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: generate-linkerd-trust-roots
+  namespace: linkerd
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+spec:
+  template:
+    spec:
+      containers:
+      - name: generate-configmap
+        image: bitnami/kubectl:latest
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          kubectl get secret linkerd-trust-anchor -n linkerd -o jsonpath="{.data['tls\.crt']}" \
+          | base64 -d > /tmp/ca.crt && \
+          kubectl create configmap linkerd-identity-trust-roots \
+            --from-file=ca-bundle.crt=/tmp/ca.crt \
+            -n linkerd --dry-run=client -o yaml | kubectl apply -f -
+      restartPolicy: OnFailure
+      serviceAccountName: default
